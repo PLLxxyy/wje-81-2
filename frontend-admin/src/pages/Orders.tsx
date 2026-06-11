@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { adminApi, concertApi } from '../api';
+import { adminApi } from '../api';
 
 interface Order {
   id: number;
@@ -13,6 +13,7 @@ interface Order {
   artist: string;
   username: string;
   email: string;
+  concert_status?: string;
 }
 
 const statusMap: Record<string, { label: string; color: string }> = {
@@ -27,6 +28,7 @@ export default function Orders() {
   const [concerts, setConcerts] = useState<any[]>([]);
   const [selectedConcert, setSelectedConcert] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
+  const [showCancelledConcerts, setShowCancelledConcerts] = useState(false);
   const [selectedOrders, setSelectedOrders] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -37,7 +39,7 @@ export default function Orders() {
   useEffect(() => {
     const fetchConcerts = async () => {
       try {
-        const response = await concertApi.getConcerts({ limit: 100 });
+        const response = await adminApi.getConcerts({ limit: 100 });
         setConcerts(response.data.concerts);
       } catch (error) {
         console.error('获取演唱会列表失败:', error);
@@ -53,6 +55,7 @@ export default function Orders() {
         const params: any = { page, limit };
         if (selectedConcert) params.concertId = parseInt(selectedConcert);
         if (selectedStatus) params.status = selectedStatus;
+        if (showCancelledConcerts) params.cancelledConcert = true;
         
         const response = await adminApi.getOrders(params);
         setOrders(response.data.orders);
@@ -65,7 +68,7 @@ export default function Orders() {
       }
     };
     fetchOrders();
-  }, [page, selectedConcert, selectedStatus]);
+  }, [page, selectedConcert, selectedStatus, showCancelledConcerts]);
 
   const handleSelectAll = () => {
     if (selectedOrders.length === orders.length) {
@@ -98,6 +101,7 @@ export default function Orders() {
       const params: any = { page, limit };
       if (selectedConcert) params.concertId = parseInt(selectedConcert);
       if (selectedStatus) params.status = selectedStatus;
+      if (showCancelledConcerts) params.cancelledConcert = true;
       const response = await adminApi.getOrders(params);
       setOrders(response.data.orders);
       setSelectedOrders([]);
@@ -140,12 +144,12 @@ export default function Orders() {
             <label className="text-sm text-gray-600">演唱会：</label>
             <select
               value={selectedConcert}
-              onChange={(e) => { setSelectedConcert(e.target.value); setPage(1); }}
+              onChange={(e) => { setSelectedConcert(e.target.value); setPage(1); setShowCancelledConcerts(false); }}
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
             >
               <option value="">全部</option>
               {concerts.map(c => (
-                <option key={c.id} value={c.id}>{c.title}</option>
+                <option key={c.id} value={c.id}>{c.title} {c.status === 'cancelled' ? '(已取消)' : ''}</option>
               ))}
             </select>
           </div>
@@ -162,6 +166,19 @@ export default function Orders() {
               <option value="refunded">已退款</option>
               <option value="cancelled">已取消</option>
             </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showCancelledConcerts}
+                onChange={(e) => { setShowCancelledConcerts(e.target.checked); setPage(1); setSelectedConcert(''); }}
+                className="w-4 h-4 rounded"
+              />
+              <span className={`text-sm ${showCancelledConcerts ? 'text-orange-600 font-medium' : 'text-gray-600'}`}>
+                仅显示已取消演出的订单
+              </span>
+            </label>
           </div>
         </div>
       </div>
@@ -202,7 +219,14 @@ export default function Orders() {
                 </td>
                 <td className="px-4 py-4 font-mono text-sm text-gray-600">{order.order_no}</td>
                 <td className="px-4 py-4">
-                  <div className="font-medium text-gray-800">{order.title}</div>
+                  <div className="font-medium text-gray-800 flex items-center gap-2">
+                    {order.title}
+                    {order.concert_status === 'cancelled' && (
+                      <span className="px-2 py-0.5 bg-red-100 text-red-600 text-xs rounded-full">
+                        演出已取消
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-gray-500">{order.artist}</div>
                 </td>
                 <td className="px-4 py-4">
@@ -229,19 +253,20 @@ export default function Orders() {
                     {order.status === 'paid' && (
                       <button
                         onClick={async () => {
-                          if (!confirm('确定要对该订单执行退款操作吗？')) return;
-                          try {
-                            await adminApi.refundOrder(order.id);
-                            alert('退款成功');
-                            const params: any = { page, limit };
-                            if (selectedConcert) params.concertId = parseInt(selectedConcert);
-                            if (selectedStatus) params.status = selectedStatus;
-                            const response = await adminApi.getOrders(params);
-                            setOrders(response.data.orders);
-                          } catch (err: any) {
-                            alert(err.response?.data?.error || '退款失败，请重试');
-                          }
-                        }}
+                        if (!confirm('确定要对该订单执行退款操作吗？')) return;
+                        try {
+                          await adminApi.refundOrder(order.id);
+                          alert('退款成功');
+                          const params: any = { page, limit };
+                          if (selectedConcert) params.concertId = parseInt(selectedConcert);
+                          if (selectedStatus) params.status = selectedStatus;
+                          if (showCancelledConcerts) params.cancelledConcert = true;
+                          const response = await adminApi.getOrders(params);
+                          setOrders(response.data.orders);
+                        } catch (err: any) {
+                          alert(err.response?.data?.error || '退款失败，请重试');
+                        }
+                      }}
                         className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       >
                         退款

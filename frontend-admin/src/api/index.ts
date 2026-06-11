@@ -41,9 +41,11 @@ export const concertApi = {
 };
 
 export const adminApi = {
+  getConcerts: (params?: { page?: number; limit?: number; status?: string }) =>
+    api.get('/admin/concerts', { params }),
   getStats: () => api.get('/admin/stats'),
   getConcertStats: (id: number) => api.get(`/admin/concerts/${id}/stats`),
-  getOrders: (params?: { concertId?: number; status?: string; page?: number; limit?: number }) =>
+  getOrders: (params?: { concertId?: number; status?: string; page?: number; limit?: number; cancelledConcert?: boolean }) =>
     api.get('/admin/orders', { params }),
   getOrder: (id: number) => api.get(`/admin/orders/${id}`),
   refundOrder: (id: number) => api.post(`/admin/orders/${id}/refund`),

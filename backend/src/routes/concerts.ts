@@ -6,9 +6,10 @@ import { Concert, TicketTier, Seat, Order, OrderItem } from '../types';
 const router = Router();
 
 router.get('/', (req, res) => {
-  const { artist, city, date, page = '1', limit = '10' } = req.query;
+  const { artist, city, date, page = '1', limit = '10', include_cancelled } = req.query;
   
-  let query = 'SELECT * FROM concerts WHERE status != \'cancelled\'';
+  const showCancelled = include_cancelled === 'true';
+  let query = showCancelled ? 'SELECT * FROM concerts WHERE 1=1' : 'SELECT * FROM concerts WHERE status != \'cancelled\'';
   const params: any[] = [];
 
   if (artist) {
@@ -29,7 +30,8 @@ router.get('/', (req, res) => {
 
   const concerts = db.prepare(query).all(...params) as Concert[];
   
-  const countQuery = 'SELECT COUNT(*) as total FROM concerts WHERE status != \'cancelled\'' + 
+  const countBase = showCancelled ? 'SELECT COUNT(*) as total FROM concerts WHERE 1=1' : 'SELECT COUNT(*) as total FROM concerts WHERE status != \'cancelled\'';
+  const countQuery = countBase + 
     (artist ? ' AND artist LIKE ?' : '') + 
     (city ? ' AND city LIKE ?' : '') + 
     (date ? ' AND date >= ?' : '');
@@ -53,13 +55,19 @@ router.get('/', (req, res) => {
   });
 });
 
-router.get('/artists', (_req, res) => {
-  const artists = db.prepare('SELECT DISTINCT artist FROM concerts WHERE status != \'cancelled\' ORDER BY artist').all() as { artist: string }[];
+router.get('/artists', (req, res) => {
+  const { include_cancelled } = req.query;
+  const showCancelled = include_cancelled === 'true';
+  const whereClause = showCancelled ? '' : 'WHERE status != \'cancelled\'';
+  const artists = db.prepare(`SELECT DISTINCT artist FROM concerts ${whereClause} ORDER BY artist`).all() as { artist: string }[];
   res.json(artists.map(a => a.artist));
 });
 
-router.get('/cities', (_req, res) => {
-  const cities = db.prepare('SELECT DISTINCT city FROM concerts WHERE status != \'cancelled\' ORDER BY city').all() as { city: string }[];
+router.get('/cities', (req, res) => {
+  const { include_cancelled } = req.query;
+  const showCancelled = include_cancelled === 'true';
+  const whereClause = showCancelled ? '' : 'WHERE status != \'cancelled\'';
+  const cities = db.prepare(`SELECT DISTINCT city FROM concerts ${whereClause} ORDER BY city`).all() as { city: string }[];
   res.json(cities.map(c => c.city));
 });
 

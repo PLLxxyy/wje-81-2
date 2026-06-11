@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { concertApi } from '../api';
+import { concertApi, adminApi } from '../api';
 
 interface Concert {
   id: number;
@@ -25,13 +25,16 @@ export default function Concerts() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [selectedStatus, setSelectedStatus] = useState('');
   const limit = 10;
 
   useEffect(() => {
     const fetchConcerts = async () => {
       setLoading(true);
       try {
-        const response = await concertApi.getConcerts({ page, limit });
+        const params: any = { page, limit };
+        if (selectedStatus) params.status = selectedStatus;
+        const response = await adminApi.getConcerts(params);
         setConcerts(response.data.concerts);
         setTotal(response.data.total);
       } catch (error) {
@@ -41,7 +44,7 @@ export default function Concerts() {
       }
     };
     fetchConcerts();
-  }, [page]);
+  }, [page, selectedStatus]);
 
   const handleCancel = async (id: number, title: string) => {
     if (!confirm(`确定要取消演出"${title}"吗？\n\n已支付的订单将自动退款，待支付的订单将自动取消，所有座位将被释放。`)) return;
@@ -49,16 +52,11 @@ export default function Concerts() {
     try {
       const response = await concertApi.cancelConcert(id);
       alert(response.data.message || '演出已取消');
-      const fetchConcerts = async () => {
-        try {
-          const response = await concertApi.getConcerts({ page, limit });
-          setConcerts(response.data.concerts);
-          setTotal(response.data.total);
-        } catch (error) {
-          console.error('获取演唱会列表失败:', error);
-        }
-      };
-      fetchConcerts();
+      const params: any = { page, limit };
+      if (selectedStatus) params.status = selectedStatus;
+      const refreshResponse = await adminApi.getConcerts(params);
+      setConcerts(refreshResponse.data.concerts);
+      setTotal(refreshResponse.data.total);
     } catch (err: any) {
       alert(err.response?.data?.error || '取消失败，请重试');
     }
@@ -69,7 +67,11 @@ export default function Concerts() {
     
     try {
       await concertApi.deleteConcert(id);
-      setConcerts(prev => prev.filter(c => c.id !== id));
+      const params: any = { page, limit };
+      if (selectedStatus) params.status = selectedStatus;
+      const response = await adminApi.getConcerts(params);
+      setConcerts(response.data.concerts);
+      setTotal(response.data.total);
       alert('删除成功');
     } catch (err: any) {
       alert(err.response?.data?.error || '删除失败，请重试');
@@ -104,6 +106,25 @@ export default function Concerts() {
         >
           + 创建演唱会
         </Link>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-600">状态：</label>
+            <select
+              value={selectedStatus}
+              onChange={(e) => { setSelectedStatus(e.target.value); setPage(1); }}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+            >
+              <option value="">全部</option>
+              <option value="upcoming">即将开始</option>
+              <option value="ongoing">进行中</option>
+              <option value="completed">已结束</option>
+              <option value="cancelled">已取消</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">

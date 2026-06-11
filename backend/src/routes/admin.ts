@@ -1,9 +1,60 @@
 import { Router } from 'express';
 import db from '../database';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
-import { Order, OrderItem, TicketTier } from '../types';
+import { Order, OrderItem, TicketTier, Concert } from '../types';
 
 const router = Router();
+
+router.get('/concerts', authenticateToken, requireAdmin, (req, res) => {
+  const { artist, city, date, page = '1', limit = '10', status } = req.query;
+  
+  let query = 'SELECT * FROM concerts WHERE 1=1';
+  const params: any[] = [];
+
+  if (artist) {
+    query += ' AND artist LIKE ?';
+    params.push(`%${artist}%`);
+  }
+  if (city) {
+    query += ' AND city LIKE ?';
+    params.push(`%${city}%`);
+  }
+  if (date) {
+    query += ' AND date >= ?';
+    params.push(date);
+  }
+  if (status) {
+    query += ' AND status = ?';
+    params.push(status);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit as string), (parseInt(page as string) - 1) * parseInt(limit as string));
+
+  const concerts = db.prepare(query).all(...params) as Concert[];
+  
+  const concertsWithTiers = concerts.map(concert => {
+    const tiers = db.prepare('SELECT * FROM ticket_tiers WHERE concert_id = ?').all(concert.id) as TicketTier[];
+    return { ...concert, tiers };
+  });
+
+  const countBase = 'SELECT COUNT(*) as total FROM concerts WHERE 1=1';
+  let countQuery = countBase;
+  const countParams: any[] = [];
+  if (artist) { countQuery += ' AND artist LIKE ?'; countParams.push(`%${artist}%`); }
+  if (city) { countQuery += ' AND city LIKE ?'; countParams.push(`%${city}%`); }
+  if (date) { countQuery += ' AND date >= ?'; countParams.push(date); }
+  if (status) { countQuery += ' AND status = ?'; countParams.push(status); }
+  
+  const { total } = db.prepare(countQuery).get(...countParams) as { total: number };
+
+  res.json({
+    concerts: concertsWithTiers,
+    total,
+    page: parseInt(page as string),
+    limit: parseInt(limit as string)
+  });
+});
 
 router.get('/stats', authenticateToken, requireAdmin, (_req, res) => {
   const totalConcerts = db.prepare('SELECT COUNT(*) as count FROM concerts').get() as { count: number };
@@ -55,10 +106,10 @@ router.get('/concerts/:id/stats', authenticateToken, requireAdmin, (req, res) =>
 });
 
 router.get('/orders', authenticateToken, requireAdmin, (req, res) => {
-  const { concertId, status, page = '1', limit = '20' } = req.query;
+  const { concertId, status, page = '1', limit = '20', cancelledConcert } = req.query;
   
   let query = `
-    SELECT o.*, c.title, c.artist, c.date, u.username, u.email
+    SELECT o.*, c.title, c.artist, c.date, c.status as concert_status, u.username, u.email
     FROM orders o
     JOIN concerts c ON o.concert_id = c.id
     JOIN users u ON o.user_id = u.id
@@ -74,8 +125,11 @@ router.get('/orders', authenticateToken, requireAdmin, (req, res) => {
     query += ' AND o.status = ?';
     params.push(status);
   }
+  if (cancelledConcert === 'true') {
+    query += " AND c.status = 'cancelled'";
+  }
 
-  const countQuery = query.replace('SELECT o.*, c.title, c.artist, c.date, u.username, u.email', 'SELECT COUNT(*) as total');
+  const countQuery = query.replace('SELECT o.*, c.title, c.artist, c.date, c.status as concert_status, u.username, u.email', 'SELECT COUNT(*) as total');
   const { total } = db.prepare(countQuery).get(...params) as { total: number };
 
   query += ' ORDER BY o.created_at DESC LIMIT ? OFFSET ?';
