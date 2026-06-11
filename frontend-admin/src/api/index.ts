@@ -36,6 +36,7 @@ export const concertApi = {
   createConcert: (data: any) => api.post('/concerts', data),
   updateConcert: (id: number, data: any) => api.put(`/concerts/${id}`, data),
   deleteConcert: (id: number) => api.delete(`/concerts/${id}`),
+  cancelConcert: (id: number) => api.put(`/concerts/${id}/cancel`),
   addTier: (id: number, data: any) => api.post(`/concerts/${id}/tiers`, data),
 };
 

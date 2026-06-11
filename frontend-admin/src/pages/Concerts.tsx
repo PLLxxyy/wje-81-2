@@ -43,6 +43,27 @@ export default function Concerts() {
     fetchConcerts();
   }, [page]);
 
+  const handleCancel = async (id: number, title: string) => {
+    if (!confirm(`确定要取消演出"${title}"吗？\n\n已支付的订单将自动退款，待支付的订单将自动取消，所有座位将被释放。`)) return;
+
+    try {
+      const response = await concertApi.cancelConcert(id);
+      alert(response.data.message || '演出已取消');
+      const fetchConcerts = async () => {
+        try {
+          const response = await concertApi.getConcerts({ page, limit });
+          setConcerts(response.data.concerts);
+          setTotal(response.data.total);
+        } catch (error) {
+          console.error('获取演唱会列表失败:', error);
+        }
+      };
+      fetchConcerts();
+    } catch (err: any) {
+      alert(err.response?.data?.error || '取消失败，请重试');
+    }
+  };
+
   const handleDelete = async (id: number, title: string) => {
     if (!confirm(`确定要删除演唱会"${title}"吗？此操作不可恢复。`)) return;
     
@@ -140,6 +161,14 @@ export default function Concerts() {
                     >
                       编辑
                     </Link>
+                    {concert.status !== 'cancelled' && (
+                      <button
+                        onClick={() => handleCancel(concert.id, concert.title)}
+                        className="px-3 py-1.5 text-sm text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                      >
+                        取消演出
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(concert.id, concert.title)}
                       className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"

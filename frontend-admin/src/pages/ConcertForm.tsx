@@ -32,6 +32,7 @@ export default function ConcertForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [originalStatus, setOriginalStatus] = useState('upcoming');
 
   useEffect(() => {
     if (isEdit) {
@@ -51,6 +52,7 @@ export default function ConcertForm() {
             poster_url: data.poster_url || '',
             status: data.status,
           });
+          setOriginalStatus(data.status);
         } catch (error) {
           console.error('获取演唱会详情失败:', error);
         } finally {
@@ -121,6 +123,12 @@ export default function ConcertForm() {
           setError(`请完善第${i + 1}个票档的信息`);
           return;
         }
+      }
+    }
+
+    if (isEdit && formData.status === 'cancelled' && originalStatus !== 'cancelled') {
+      if (!confirm('确定要将此演出状态改为"已取消"吗？\n\n系统将自动处理：\n• 已支付的订单 → 退款\n• 待支付的订单 → 取消\n• 所有被占座位 → 释放')) {
+        return;
       }
     }
 
@@ -259,6 +267,11 @@ export default function ConcertForm() {
                   <option value="completed">已结束</option>
                   <option value="cancelled">已取消</option>
                 </select>
+                {formData.status === 'cancelled' && originalStatus !== 'cancelled' && (
+                  <p className="mt-2 text-sm text-orange-600">
+                    ⚠️ 取消演出将自动退款已支付订单、取消待支付订单并释放所有座位
+                  </p>
+                )}
               </div>
             )}
           </div>

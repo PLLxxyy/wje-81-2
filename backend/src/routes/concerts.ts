@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
-import { Concert, TicketTier, Seat } from '../types';
+import { Concert, TicketTier, Seat, Order, OrderItem } from '../types';
 
 const router = Router();
 
@@ -143,6 +143,72 @@ router.put('/:id', authenticateToken, requireAdmin, (req, res) => {
   const { title, artist, city, venue, date, time, description, poster_url, status, seatMapConfig } = req.body;
   const concertId = parseInt(req.params.id);
 
+  const currentConcert = db.prepare('SELECT status FROM concerts WHERE id = ?').get(concertId) as Concert | undefined;
+  if (!currentConcert) {
+    return res.status(404).json({ error: '演唱会不存在' });
+  }
+
+  if (status === 'cancelled' && currentConcert.status !== 'cancelled') {
+    const tx = db.transaction(() => {
+      db.prepare(`
+        UPDATE concerts 
+        SET title = COALESCE(?, title),
+            artist = COALESCE(?, artist),
+            city = COALESCE(?, city),
+            venue = COALESCE(?, venue),
+            date = COALESCE(?, date),
+            time = COALESCE(?, time),
+            description = COALESCE(?, description),
+            poster_url = COALESCE(?, poster_url),
+            status = 'cancelled',
+            seat_map_config = COALESCE(?, seat_map_config)
+        WHERE id = ?
+      `).run(title, artist, city, venue, date, time, description, poster_url, JSON.stringify(seatMapConfig || null), concertId);
+
+      const paidOrders = db.prepare(
+        "SELECT * FROM orders WHERE concert_id = ? AND status = 'paid'"
+      ).all(concertId) as Order[];
+
+      for (const order of paidOrders) {
+        db.prepare("UPDATE orders SET status = 'refunded', refunded_at = DATETIME('now') WHERE id = ?").run(order.id);
+        const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id) as OrderItem[];
+        for (const item of items) {
+          db.prepare("UPDATE seats SET status = 'available', order_id = NULL, locked_until = NULL WHERE id = ?").run(item.seat_id);
+          db.prepare('UPDATE ticket_tiers SET sold_seats = sold_seats - 1 WHERE id = ?').run(item.tier_id);
+        }
+      }
+
+      const pendingOrders = db.prepare(
+        "SELECT * FROM orders WHERE concert_id = ? AND status = 'pending'"
+      ).all(concertId) as Order[];
+
+      for (const order of pendingOrders) {
+        db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(order.id);
+        const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id) as OrderItem[];
+        for (const item of items) {
+          db.prepare("UPDATE seats SET status = 'available', order_id = NULL, locked_until = NULL WHERE id = ?").run(item.seat_id);
+          db.prepare('UPDATE ticket_tiers SET sold_seats = sold_seats - 1 WHERE id = ?').run(item.tier_id);
+        }
+      }
+
+      db.prepare("UPDATE seats SET status = 'available', locked_until = NULL WHERE concert_id = ? AND status = 'locked'").run(concertId);
+
+      return { refundedCount: paidOrders.length, cancelledCount: pendingOrders.length };
+    });
+
+    try {
+      const result = tx();
+      res.json({
+        message: '演唱会已取消，关联订单已自动处理',
+        refundedCount: result.refundedCount,
+        cancelledCount: result.cancelledCount,
+      });
+    } catch (error) {
+      res.status(500).json({ error: '取消演出失败' });
+    }
+    return;
+  }
+
   try {
     db.prepare(`
       UPDATE concerts 
@@ -162,6 +228,73 @@ router.put('/:id', authenticateToken, requireAdmin, (req, res) => {
     res.json({ message: '演唱会更新成功' });
   } catch (error) {
     res.status(500).json({ error: '更新演唱会失败' });
+  }
+});
+
+router.put('/:id/cancel', authenticateToken, requireAdmin, (req, res) => {
+  const concertId = parseInt(req.params.id);
+
+  const concert = db.prepare('SELECT * FROM concerts WHERE id = ?').get(concertId) as Concert;
+  if (!concert) {
+    return res.status(404).json({ error: '演唱会不存在' });
+  }
+  if (concert.status === 'cancelled') {
+    return res.status(400).json({ error: '演唱会已取消' });
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare("UPDATE concerts SET status = 'cancelled' WHERE id = ?").run(concertId);
+
+    const paidOrders = db.prepare(
+      "SELECT * FROM orders WHERE concert_id = ? AND status = 'paid'"
+    ).all(concertId) as Order[];
+
+    for (const order of paidOrders) {
+      db.prepare(
+        "UPDATE orders SET status = 'refunded', refunded_at = DATETIME('now') WHERE id = ?"
+      ).run(order.id);
+
+      const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id) as OrderItem[];
+      for (const item of items) {
+        db.prepare("UPDATE seats SET status = 'available', order_id = NULL, locked_until = NULL WHERE id = ?").run(item.seat_id);
+        db.prepare('UPDATE ticket_tiers SET sold_seats = sold_seats - 1 WHERE id = ?').run(item.tier_id);
+      }
+    }
+
+    const pendingOrders = db.prepare(
+      "SELECT * FROM orders WHERE concert_id = ? AND status = 'pending'"
+    ).all(concertId) as Order[];
+
+    for (const order of pendingOrders) {
+      db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(order.id);
+
+      const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id) as OrderItem[];
+      for (const item of items) {
+        db.prepare("UPDATE seats SET status = 'available', order_id = NULL, locked_until = NULL WHERE id = ?").run(item.seat_id);
+        db.prepare('UPDATE ticket_tiers SET sold_seats = sold_seats - 1 WHERE id = ?').run(item.tier_id);
+      }
+    }
+
+    db.prepare(
+      "UPDATE seats SET status = 'available', locked_until = NULL WHERE concert_id = ? AND status = 'locked'"
+    ).run(concertId);
+
+    return {
+      refundedCount: paidOrders.length,
+      cancelledCount: pendingOrders.length,
+    };
+  });
+
+  try {
+    const result = tx();
+    res.json({
+      success: true,
+      message: `演出已取消，已退款 ${result.refundedCount} 笔订单，已取消 ${result.cancelledCount} 笔待支付订单`,
+      refundedCount: result.refundedCount,
+      cancelledCount: result.cancelledCount,
+    });
+  } catch (error) {
+    res.status(500).json({ error: '取消演出失败' });
   }
 });
 
